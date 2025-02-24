@@ -90,15 +90,22 @@ func (s *Syncer[T]) Run(querier func(s *Syncer[T]) (clean func(), err error), co
 		s.run(querier, consumer)
 	})
 }
-func (m *Syncer[T]) Close() {
+
+func (s *Syncer[T]) Push(item T) {
+	if !s.stopped {
+		s.data <- item
+	}
+}
+
+func (s *Syncer[T]) Close() {
 	defer func() {
 		recover()
 	}()
-	m.stopped = true
-	m.stopC <- struct{}{}
-	close(m.restartC)
-	close(m.stopC)
-	close(m.data)
+	s.stopped = true
+	s.stopC <- struct{}{}
+	close(s.restartC)
+	close(s.stopC)
+	close(s.data)
 }
 
 func (s *Syncer[T]) run(querier func(s *Syncer[T]) (clean func(), err error), consumer func(item T) error) {
