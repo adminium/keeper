@@ -85,6 +85,10 @@ type Syncer[T any] struct {
 	conf      *Conf
 }
 
+func (s *Syncer[T]) Log() *logger.Logger {
+	return s.log
+}
+
 func (s *Syncer[T]) Run(querier func(s *Syncer[T]) (clean func(), err error), consumer func(item T) error) {
 	s.once.Do(func() {
 		s.run(querier, consumer)
@@ -113,13 +117,13 @@ func (s *Syncer[T]) run(querier func(s *Syncer[T]) (clean func(), err error), co
 Start:
 	clean, err := querier(s)
 	if err != nil {
-		s.log.Errorf("exec syncer quering error: %s, restart after: %s", err, s.conf.retryDuration)
+		s.log.Errorf("exec syncer quering error: %s, Restart after: %s", err, s.conf.retryDuration)
 		time.Sleep(s.conf.retryDuration)
 		goto Start
 	}
 	select {
 	case <-s.restartC:
-		s.log.Infof("restart syncer")
+		s.log.Infof("Restart syncer")
 		if clean != nil {
 			clean()
 		}
@@ -139,10 +143,10 @@ func (s *Syncer[T]) consume(consumer func(item T) error) {
 		select {
 		case <-ticker.C:
 			if time.Now().Sub(s.updatedAt) > s.conf.blockDuration {
-				s.log.Errorf("consume data timeout, restart after: %s", s.conf.retryDuration)
+				s.log.Errorf("consume data timeout, Restart after: %s", s.conf.retryDuration)
 				time.Sleep(s.conf.retryDuration)
 				s.updatedAt = time.Now()
-				s.restart()
+				s.Restart()
 			}
 		case item := <-s.data:
 			s.updatedAt = time.Now()
@@ -157,6 +161,8 @@ func (s *Syncer[T]) consume(consumer func(item T) error) {
 	}
 }
 
-func (s *Syncer[T]) restart() {
-	s.restartC <- struct{}{}
+func (s *Syncer[T]) Restart() {
+	if !s.stopped {
+		s.restartC <- struct{}{}
+	}
 }
