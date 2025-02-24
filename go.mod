@@ -1,6 +1,6 @@
 module github.com/adminium/syncer
 
-go 1.23.5
+go 1.20
 
 require (
 	github.com/adminium/logger v1.5.2 // indirect
