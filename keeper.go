@@ -61,7 +61,6 @@ type Producer[T any] func(k *Keeper[T]) (clean func(), err error)
 type Consumer[T any] func(k *Keeper[T], item T) (err error)
 
 func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
-
 	conf := &Conf{
 		blockDuration: time.Minute,
 		loggerModule:  fmt.Sprintf("syncer::%s", name),
@@ -69,11 +68,9 @@ func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
 		retryDuration: 2 * time.Second,
 	}
 	conf.logger = logger.NewLogger(conf.loggerModule)
-
 	for _, option := range options {
 		option(conf)
 	}
-
 	return &Keeper[T]{
 		name:      name,
 		conf:      conf,
@@ -84,11 +81,13 @@ func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
 		stopped:   false,
 		once:      sync.Once{},
 		updatedAt: time.Now(),
+		store:     make(map[string]any),
 	}
 }
 
 type Keeper[T any] struct {
 	name      string
+	store     map[string]any
 	log       Logger
 	restartC  chan struct{}
 	stopC     chan struct{}
@@ -99,6 +98,14 @@ type Keeper[T any] struct {
 	conf      *Conf
 	producer  Producer[T]
 	consumer  Consumer[T]
+}
+
+func (k *Keeper[T]) Set(key string, value any) {
+	k.store[key] = value
+}
+
+func (k *Keeper[T]) Get(key string) any {
+	return k.store[key]
 }
 
 func (k *Keeper[T]) SetProducer(producer Producer[T]) {
@@ -151,7 +158,8 @@ Start:
 	}
 	select {
 	case <-k.restartC:
-		k.log.Infof("restart")
+		k.log.Infof("restart after: %s", k.conf.retryDuration)
+		time.Sleep(k.conf.retryDuration)
 		if clean != nil {
 			clean()
 		}
@@ -171,20 +179,22 @@ func (k *Keeper[T]) consume() {
 		return
 	}
 	ticker := time.NewTicker(k.conf.blockDuration)
+
 	for {
 		select {
 		case <-ticker.C:
 			if time.Now().Sub(k.updatedAt) > k.conf.blockDuration {
-				k.log.Errorf("consume data timeout, Restart after: %s", k.conf.retryDuration)
-				time.Sleep(k.conf.retryDuration)
+				k.log.Errorf("consume data timeout, prepare to restart")
 				k.updatedAt = time.Now()
 				k.Restart()
 			}
 		case item := <-k.data:
 			if err := k.consumer(k, item); err != nil {
-				k.log.Errorf("consume item error: %s", err)
+				k.log.Errorf("consume item error: %s, prepare to restart", err)
+				k.Restart()
+			} else {
+				k.updatedAt = time.Now()
 			}
-			k.updatedAt = time.Now()
 		case <-k.stopC:
 			k.log.Infof("stop consuming")
 			ticker.Stop()
