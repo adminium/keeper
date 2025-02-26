@@ -1,4 +1,4 @@
-module github.com/adminium/syncer
+module github.com/adminium/keeper
 
 go 1.20
 
