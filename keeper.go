@@ -63,7 +63,7 @@ type Consumer[T any] func(k *Keeper[T], item T) (err error)
 func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
 	conf := &Conf{
 		blockDuration: time.Minute,
-		loggerModule:  fmt.Sprintf("syncer::%s", name),
+		loggerModule:  fmt.Sprintf("keeper::%s", name),
 		dataChanSize:  1024,
 		retryDuration: 2 * time.Second,
 	}
