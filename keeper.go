@@ -3,6 +3,7 @@ package keeper
 import (
 	"fmt"
 	"github.com/adminium/logger"
+	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"sync"
 	"time"
@@ -73,6 +74,7 @@ func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
 		option(conf)
 	}
 	return &Keeper[T]{
+		index:     atomic.NewInt64(0),
 		name:      name,
 		conf:      conf,
 		log:       conf.logger,
@@ -82,13 +84,18 @@ func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
 		stopped:   false,
 		once:      sync.Once{},
 		updatedAt: time.Now(),
-		store:     make(map[string]any),
+		store:     newStore(),
+		cleaner: &cleaner{
+			log:    conf.logger,
+			Mutex:  sync.Mutex{},
+			cleans: nil,
+		},
 	}
 }
 
 type Keeper[T any] struct {
 	name      string
-	store     map[string]any
+	store     *store
 	log       Logger
 	restartC  chan struct{}
 	stopC     chan struct{}
@@ -99,14 +106,16 @@ type Keeper[T any] struct {
 	conf      *Conf
 	producer  Producer[T]
 	consumer  Consumer[T]
+	cleaner   *cleaner
+	index     *atomic.Int64
 }
 
 func (k *Keeper[T]) Set(key string, value any) {
-	k.store[key] = value
+	k.store.Set(key, value)
 }
 
 func (k *Keeper[T]) Get(key string) any {
-	return k.store[key]
+	return k.store.Get(key)
 }
 
 func (k *Keeper[T]) SetProducer(producer Producer[T]) {
@@ -133,6 +142,14 @@ func (k *Keeper[T]) Produce(item T) {
 	}
 }
 
+func (k *Keeper[T]) Index() int64 {
+	return k.index.Load()
+}
+
+func (k *Keeper[T]) UpdatedAt() time.Time {
+	return k.updatedAt
+}
+
 func (k *Keeper[T]) Stop() {
 	defer func() {
 		recover()
@@ -150,16 +167,14 @@ func (k *Keeper[T]) run() {
 		k.Log().Warnf("producer is nil")
 		return
 	}
-	var clean func()
 Start:
 	k.log.Infof("start")
-	if clean != nil {
-		clean()
-	}
+	k.index.Add(1)
+	k.cleaner.clean()
 
 	go func() {
-		var err error
-		clean, err = k.producer(k)
+		clean, err := k.producer(k)
+		k.cleaner.addClean(clean)
 		if err != nil {
 			k.Restart(fmt.Errorf("exec producer error: %s", err))
 			return
