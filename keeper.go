@@ -3,6 +3,7 @@ package keeper
 import (
 	"fmt"
 	"github.com/adminium/logger"
+	"go.uber.org/multierr"
 	"sync"
 	"time"
 )
@@ -149,26 +150,27 @@ func (k *Keeper[T]) run() {
 		k.Log().Warnf("producer is nil")
 		return
 	}
+	var clean func()
 Start:
-	clean, err := k.producer(k)
-	if err != nil {
-		k.log.Errorf("exec producer error: %s, restart after: %s", err, k.conf.retryDuration)
-		time.Sleep(k.conf.retryDuration)
-		goto Start
+	k.log.Infof("start")
+	if clean != nil {
+		clean()
 	}
+
+	go func() {
+		var err error
+		clean, err = k.producer(k)
+		if err != nil {
+			k.Restart(fmt.Errorf("exec producer error: %s", err))
+			return
+		}
+	}()
+
 	select {
 	case <-k.restartC:
-		k.log.Infof("restart after: %s", k.conf.retryDuration)
-		time.Sleep(k.conf.retryDuration)
-		if clean != nil {
-			clean()
-		}
 		goto Start
 	case <-k.stopC:
 		k.log.Infof("stop")
-		if clean != nil {
-			clean()
-		}
 		return
 	}
 }
@@ -184,16 +186,13 @@ func (k *Keeper[T]) consume() {
 		select {
 		case <-ticker.C:
 			if time.Now().Sub(k.updatedAt) > k.conf.blockDuration {
-				k.log.Errorf("consume data timeout, prepare to restart")
 				k.updatedAt = time.Now()
-				k.Restart()
+				k.Restart(fmt.Errorf("consume data timeout"))
 			}
 		case item := <-k.data:
+			k.updatedAt = time.Now()
 			if err := k.consumer(k, item); err != nil {
-				k.log.Errorf("consume item error: %s, prepare to restart", err)
-				k.Restart()
-			} else {
-				k.updatedAt = time.Now()
+				k.Restart(fmt.Errorf("consume data item error: %s", err))
 			}
 		case <-k.stopC:
 			k.log.Infof("stop consuming")
@@ -203,8 +202,15 @@ func (k *Keeper[T]) consume() {
 	}
 }
 
-func (k *Keeper[T]) Restart() {
+func (k *Keeper[T]) Restart(err ...error) {
 	if !k.stopped {
+		e := multierr.Combine(err...)
+		if e != nil {
+			k.log.Errorf("%s, restart after: %s", e, k.conf.retryDuration)
+		} else {
+			k.log.Infof("prepare to restart after: %s", k.conf.retryDuration)
+		}
+		time.Sleep(k.conf.retryDuration)
 		k.restartC <- struct{}{}
 	} else {
 		k.log.Errorf("restart error, instance is stopped")
