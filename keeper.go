@@ -159,9 +159,16 @@ func (k *Keeper[T]) Run() {
 	})
 }
 
-func (k *Keeper[T]) Produce(item []T) {
+func (k *Keeper[T]) Produce(item T) {
 	if !k.stopped {
-		k.data <- item
+		if k.bucket != nil {
+			err := k.bucket.Push(item)
+			if err != nil {
+				k.log.Errorf("push item to bucket err: %s", err)
+			}
+		} else {
+			k.data <- []T{item}
+		}
 	}
 }
 
@@ -200,8 +207,9 @@ Start:
 			k.bucket.Stop()
 		}
 		k.bucket = bucket.NewBucket[T](k.conf.bucketThreshold, k.conf.bucketInterval, func(data []T) {
-			k.Produce(data)
+			k.data <- data
 		})
+		k.bucket.SetLog(k.log)
 		go k.bucket.Start()
 	}
 

@@ -29,7 +29,7 @@ func (c *cleaner) clean() {
 func (c *cleaner) exec(f func()) {
 	defer func() {
 		e := recover()
-		if e == nil {
+		if e != nil {
 			c.log.Errorf("clean error: %v", e)
 		}
 	}()

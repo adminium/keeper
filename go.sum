@@ -2,6 +2,8 @@ github.com/adminium/async v0.0.0-20250226123036-802c081441aa h1:4kFaWPTvr8r9oA5W
 github.com/adminium/async v0.0.0-20250226123036-802c081441aa/go.mod h1:WzxZjIleuhs99r3jc0N5wT86nss/0oCw92qz9gFc26U=
 github.com/adminium/async v0.0.0-20250226124155-f290319ea33e h1:RaG/trsuwxI5MZ/kOoYiimqisw/iMxOxEKL6V4Ffo8k=
 github.com/adminium/async v0.0.0-20250226124155-f290319ea33e/go.mod h1:WzxZjIleuhs99r3jc0N5wT86nss/0oCw92qz9gFc26U=
+github.com/adminium/async v0.0.0-20250226125210-ece04ad4e49b h1:41HDhVDVoCrR+CyJEsOw1ybaaEcEkpz8eqahGhFw5Jk=
+github.com/adminium/async v0.0.0-20250226125210-ece04ad4e49b/go.mod h1:WzxZjIleuhs99r3jc0N5wT86nss/0oCw92qz9gFc26U=
 github.com/adminium/logger v1.5.1 h1:1fTBLStthSC6c0QKywe1o+yyqCIzZyWN+rbk1haaWxs=
 github.com/adminium/logger v1.5.1/go.mod h1:GtVGPAKGk/Mwg6qrsmgQKkSI+7RFZPLZv4X1XB4Xoag=
 github.com/adminium/logger v1.5.2 h1:T0Y2NW5+TwWDv4k86LHGJpdGaWfiqztsXwl5z8QFbYM=
