@@ -1,3 +1,7 @@
+github.com/adminium/async v0.0.0-20250226123036-802c081441aa h1:4kFaWPTvr8r9oA5WuhP3+BXytWQzf2pKu1z0+usYy/k=
+github.com/adminium/async v0.0.0-20250226123036-802c081441aa/go.mod h1:WzxZjIleuhs99r3jc0N5wT86nss/0oCw92qz9gFc26U=
+github.com/adminium/async v0.0.0-20250226124155-f290319ea33e h1:RaG/trsuwxI5MZ/kOoYiimqisw/iMxOxEKL6V4Ffo8k=
+github.com/adminium/async v0.0.0-20250226124155-f290319ea33e/go.mod h1:WzxZjIleuhs99r3jc0N5wT86nss/0oCw92qz9gFc26U=
 github.com/adminium/logger v1.5.1 h1:1fTBLStthSC6c0QKywe1o+yyqCIzZyWN+rbk1haaWxs=
 github.com/adminium/logger v1.5.1/go.mod h1:GtVGPAKGk/Mwg6qrsmgQKkSI+7RFZPLZv4X1XB4Xoag=
 github.com/adminium/logger v1.5.2 h1:T0Y2NW5+TwWDv4k86LHGJpdGaWfiqztsXwl5z8QFbYM=
@@ -18,6 +22,7 @@ github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/
 github.com/yuin/goldmark v1.3.5/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1Zlc8k=
 go.uber.org/atomic v1.7.0 h1:ADUqmZGgLDDfbSL9ZmPxKTybcoEYHgpYfELNoN+7hsw=
 go.uber.org/atomic v1.7.0/go.mod h1:fEN4uk6kAWBTFdckzkM89CLk9XfWZrxpCo0nPH17wJc=
+go.uber.org/atomic v1.11.0/go.mod h1:LUxbIzbOniOlMKjJjyPfpl4v+PKK2cNJn91OQbhoJI0=
 go.uber.org/goleak v1.1.11-0.20210813005559-691160354723/go.mod h1:cwTWslyiVhfpKIDGSZEM2HlOvcqm+tG4zioyIeLoqMQ=
 go.uber.org/multierr v1.6.0 h1:y6IPFStTAIT5Ytl7/XYmHvzXQ7S3g/IeZW9hyZ5thw4=
 go.uber.org/multierr v1.6.0/go.mod h1:cdWPpRnG4AhwMwsgIHip0KRBQjJy5kYEpYjJxpXp9iU=

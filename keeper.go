@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"fmt"
+	"github.com/adminium/async/bucket"
 	"github.com/adminium/logger"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -10,11 +11,14 @@ import (
 )
 
 type Conf struct {
-	blockDuration time.Duration
-	loggerModule  string
-	dataChanSize  int
-	retryDuration time.Duration
-	logger        Logger
+	blockDuration   time.Duration
+	loggerModule    string
+	dataChanSize    int
+	retryDuration   time.Duration
+	logger          Logger
+	bucket          bool
+	bucketThreshold uint
+	bucketInterval  time.Duration
 }
 
 type Option func(conf *Conf)
@@ -59,15 +63,33 @@ func WithLogger(logger Logger) Option {
 	}
 }
 
+func WithBucket(threshold uint, interval time.Duration) Option {
+	return func(conf *Conf) {
+		if threshold > 0 || interval > 0 {
+			conf.bucket = true
+		}
+		if threshold > 0 {
+			conf.bucketThreshold = threshold
+		}
+		if interval > 0 {
+			conf.bucketInterval = interval
+		}
+		return
+	}
+}
+
 type Producer[T any] func(k *Keeper[T]) (clean func(), err error)
-type Consumer[T any] func(k *Keeper[T], item T) (err error)
+type Consumer[T any] func(k *Keeper[T], items []T) (err error)
 
 func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
 	conf := &Conf{
-		blockDuration: time.Minute,
-		loggerModule:  fmt.Sprintf("keeper::%s", name),
-		dataChanSize:  1024,
-		retryDuration: 2 * time.Second,
+		blockDuration:   time.Minute,
+		loggerModule:    fmt.Sprintf("keeper::%s", name),
+		dataChanSize:    1024,
+		retryDuration:   2 * time.Second,
+		bucket:          false,
+		bucketThreshold: 100,
+		bucketInterval:  5 * time.Second,
 	}
 	conf.logger = logger.NewLogger(conf.loggerModule)
 	for _, option := range options {
@@ -80,7 +102,7 @@ func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
 		log:       conf.logger,
 		restartC:  make(chan struct{}),
 		stopC:     make(chan struct{}),
-		data:      make(chan T, conf.dataChanSize),
+		data:      make(chan []T, conf.dataChanSize),
 		stopped:   false,
 		once:      sync.Once{},
 		updatedAt: time.Now(),
@@ -99,7 +121,7 @@ type Keeper[T any] struct {
 	log       Logger
 	restartC  chan struct{}
 	stopC     chan struct{}
-	data      chan T
+	data      chan []T
 	stopped   bool
 	once      sync.Once
 	updatedAt time.Time
@@ -108,6 +130,7 @@ type Keeper[T any] struct {
 	consumer  Consumer[T]
 	cleaner   *cleaner
 	index     *atomic.Int64
+	bucket    *bucket.Bucket[T]
 }
 
 func (k *Keeper[T]) Set(key string, value any) {
@@ -136,7 +159,7 @@ func (k *Keeper[T]) Run() {
 	})
 }
 
-func (k *Keeper[T]) Produce(item T) {
+func (k *Keeper[T]) Produce(item []T) {
 	if !k.stopped {
 		k.data <- item
 	}
@@ -172,6 +195,16 @@ Start:
 	k.index.Add(1)
 	k.cleaner.clean()
 
+	if k.conf.bucket {
+		if k.bucket != nil {
+			k.bucket.Stop()
+		}
+		k.bucket = bucket.NewBucket[T](k.conf.bucketThreshold, k.conf.bucketInterval, func(data []T) {
+			k.Produce(data)
+		})
+		go k.bucket.Start()
+	}
+
 	go func() {
 		clean, err := k.producer(k)
 		k.cleaner.addClean(clean)
@@ -204,9 +237,9 @@ func (k *Keeper[T]) consume() {
 				k.updatedAt = time.Now()
 				k.Restart(fmt.Errorf("consume data timeout"))
 			}
-		case item := <-k.data:
+		case items := <-k.data:
 			k.updatedAt = time.Now()
-			if err := k.consumer(k, item); err != nil {
+			if err := k.consumer(k, items); err != nil {
 				k.Restart(fmt.Errorf("consume data item error: %s", err))
 			}
 		case <-k.stopC:
