@@ -198,13 +198,17 @@ func (k *Keeper[T]) run() {
 		return
 	}
 Start:
+	k.log.Infof("start")
 	k.index.Add(1)
+	k.log.Infof("begin to clean")
 	k.cleaner.clean()
 
 	if k.conf.bucket {
+		k.log.Infof("begin to stop bucket")
 		if k.bucket != nil {
 			k.bucket.Stop()
 		}
+		k.log.Infof("begin to new bucket")
 		k.bucket = bucket.NewBucket[T](k.conf.bucketThreshold, k.conf.bucketInterval, func(data []T) {
 			k.data <- data
 		})
