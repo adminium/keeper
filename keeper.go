@@ -198,7 +198,6 @@ func (k *Keeper[T]) run() {
 		return
 	}
 Start:
-	k.log.Infof("start")
 	k.index.Add(1)
 	k.cleaner.clean()
 
@@ -214,7 +213,9 @@ Start:
 	}
 
 	go func() {
+		k.log.Infof("exec producer start")
 		clean, err := k.producer(k)
+		k.log.Infof("exec producer end")
 		k.cleaner.addClean(clean)
 		if err != nil {
 			k.Restart(fmt.Errorf("exec producer error: %s", err))
