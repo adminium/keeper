@@ -10,7 +10,15 @@ import (
 	"time"
 )
 
+type Action int
+
+const (
+	Quit    Action = 0
+	Restart Action = 1
+)
+
 type Conf struct {
+	errorAction     Action
 	blockDuration   time.Duration
 	loggerModule    string
 	dataChanSize    int
@@ -22,6 +30,12 @@ type Conf struct {
 }
 
 type Option func(conf *Conf)
+
+func WithErrorAction(action Action) Option {
+	return func(conf *Conf) {
+		conf.errorAction = action
+	}
+}
 
 func WithBlockDuration(duration time.Duration) Option {
 	return func(conf *Conf) {
@@ -100,11 +114,9 @@ func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
 		name:      name,
 		conf:      conf,
 		log:       conf.logger,
-		restartC:  make(chan struct{}),
-		stopC:     make(chan struct{}),
+		restartC:  make(chan error, 1),
+		stopC:     make(chan struct{}, 1),
 		data:      make(chan []T, conf.dataChanSize),
-		stopped:   false,
-		once:      sync.Once{},
 		updatedAt: time.Now(),
 		store:     newStore(),
 		cleaner: &cleaner{
@@ -116,21 +128,23 @@ func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
 }
 
 type Keeper[T any] struct {
-	name      string
-	store     *store
-	log       Logger
-	restartC  chan struct{}
-	stopC     chan struct{}
-	data      chan []T
-	stopped   bool
-	once      sync.Once
-	updatedAt time.Time
-	conf      *Conf
-	producer  Producer[T]
-	consumer  Consumer[T]
-	cleaner   *cleaner
-	index     *atomic.Int64
-	bucket    *bucket.Bucket[T]
+	name       string
+	store      *store
+	log        Logger
+	restartC   chan error
+	stopC      chan struct{}
+	data       chan []T
+	updatedAt  time.Time
+	conf       *Conf
+	producer   Producer[T]
+	consumer   Consumer[T]
+	cleaner    *cleaner
+	index      *atomic.Int64
+	bucket     *bucket.Bucket[T]
+	stopped    atomic.Bool
+	closed     atomic.Bool
+	running    atomic.Bool
+	restarting atomic.Bool
 }
 
 func (k *Keeper[T]) Set(key string, value any) {
@@ -153,22 +167,30 @@ func (k *Keeper[T]) Log() Logger {
 	return k.log
 }
 
-func (k *Keeper[T]) Run() {
-	k.once.Do(func() {
-		k.run()
-	})
+func (k *Keeper[T]) Run() (err error) {
+	if k.running.CompareAndSwap(false, true) {
+		err = k.run()
+		if err != nil {
+			return
+		}
+		return
+	} else {
+		err = fmt.Errorf("instance is running")
+		return
+	}
 }
 
 func (k *Keeper[T]) Produce(item T) {
-	if !k.stopped {
-		if k.bucket != nil {
-			err := k.bucket.Push(item)
-			if err != nil {
-				k.log.Errorf("push item to bucket err: %s", err)
-			}
-		} else {
-			k.data <- []T{item}
+	if k.stopped.Load() {
+		return
+	}
+	if k.bucket != nil {
+		err := k.bucket.Push(item)
+		if err != nil {
+			k.log.Errorf("push item to bucket err: %s", err)
 		}
+	} else {
+		k.data <- []T{item}
 	}
 }
 
@@ -181,55 +203,69 @@ func (k *Keeper[T]) UpdatedAt() time.Time {
 }
 
 func (k *Keeper[T]) Stop() {
-	defer func() {
-		recover()
-	}()
-	k.stopped = true
+	if !k.stopped.CompareAndSwap(false, true) {
+		return
+	}
 	k.stopC <- struct{}{}
+}
+
+func (k *Keeper[T]) close() {
+	if !k.closed.CompareAndSwap(false, true) {
+		return
+	}
 	close(k.restartC)
 	close(k.stopC)
 	close(k.data)
+	if k.bucket != nil {
+		k.bucket.Stop()
+	}
 }
 
-func (k *Keeper[T]) run() {
+func (k *Keeper[T]) run() (err error) {
+
+	defer func() {
+		k.close()
+	}()
+
 	go k.consume()
 	if k.producer == nil {
 		k.Log().Warnf("producer is nil")
 		return
 	}
-Start:
-	k.log.Infof("start")
-	k.index.Add(1)
-	k.log.Infof("begin to clean")
-	k.cleaner.clean()
 
 	if k.conf.bucket {
-		k.log.Infof("begin to stop bucket")
-		if k.bucket != nil {
-			k.bucket.Stop()
-		}
-		k.log.Infof("begin to new bucket")
 		k.bucket = bucket.NewBucket[T](k.conf.bucketThreshold, k.conf.bucketInterval, func(data []T) {
 			k.data <- data
 		})
 		k.bucket.SetLog(k.log)
 		go k.bucket.Start()
 	}
+Start:
+	k.log.Infof("start")
+	k.index.Add(1)
+	k.cleaner.clean()
 
 	go func() {
-		k.log.Infof("exec producer start")
-		clean, err := k.producer(k)
-		k.log.Infof("exec producer end")
+		clean, e := k.producer(k)
 		k.cleaner.addClean(clean)
-		if err != nil {
+		if e != nil {
 			k.Restart(fmt.Errorf("exec producer error: %s", err))
 			return
 		}
+		k.log.Infof("start producer")
 	}()
 
 	select {
-	case <-k.restartC:
-		goto Start
+	case err = <-k.restartC:
+		switch k.conf.errorAction {
+		case Quit:
+			return
+		case Restart:
+			goto Start
+		default:
+			err = fmt.Errorf("unsupported error action: %d", k.conf.errorAction)
+			return
+		}
 	case <-k.stopC:
 		k.log.Infof("stop")
 		return
@@ -253,7 +289,7 @@ func (k *Keeper[T]) consume() {
 		case items := <-k.data:
 			k.updatedAt = time.Now()
 			if err := k.consumer(k, items); err != nil {
-				k.Restart(fmt.Errorf("consume data item error: %s", err))
+				k.Restart(fmt.Errorf("consume data error: %s", err))
 			}
 		case <-k.stopC:
 			k.log.Infof("stop consuming")
@@ -264,16 +300,18 @@ func (k *Keeper[T]) consume() {
 }
 
 func (k *Keeper[T]) Restart(err ...error) {
-	if !k.stopped {
-		e := multierr.Combine(err...)
-		if e != nil {
-			k.log.Errorf("%s, restart after: %s", e, k.conf.retryDuration)
-		} else {
-			k.log.Infof("prepare to restart after: %s", k.conf.retryDuration)
-		}
-		time.Sleep(k.conf.retryDuration)
-		k.restartC <- struct{}{}
-	} else {
-		k.log.Errorf("restart error, instance is stopped")
+	if !k.restarting.CompareAndSwap(false, true) {
+		return
 	}
+	if !k.stopped.Load() {
+		return
+	}
+	e := multierr.Combine(err...)
+	if e != nil {
+		k.log.Errorf("%s, restart after: %s", e, k.conf.retryDuration)
+	} else {
+		k.log.Infof("prepare to restart after: %s", k.conf.retryDuration)
+	}
+	time.Sleep(k.conf.retryDuration)
+	k.restartC <- e
 }

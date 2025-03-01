@@ -46,14 +46,17 @@ func TestKeeper(t *testing.T) {
 		return
 	})
 
-	k.SetConsumer(func(k *Keeper[int], item int) (err error) {
-		k.Log().Infof("receive item: %d", item)
-		if item == 3 {
-			stop <- struct{}{}
-			return fmt.Errorf("manual error")
-		}
-		if item == 10 {
-			k.Stop()
+	k.SetConsumer(func(k *Keeper[int], items []int) (err error) {
+		for _, item := range items {
+			k.Log().Infof("receive item: %d", item)
+			if item == 3 {
+				stop <- struct{}{}
+				return fmt.Errorf("manual error")
+			}
+			if item == 10 {
+				k.Stop()
+				return
+			}
 			return
 		}
 		return
