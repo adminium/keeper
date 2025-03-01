@@ -224,6 +224,7 @@ func (k *Keeper[T]) close() {
 func (k *Keeper[T]) run() (err error) {
 
 	defer func() {
+		k.log.Infof("quit, error: %s", err)
 		k.close()
 	}()
 
