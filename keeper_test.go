@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 )
@@ -67,6 +68,79 @@ func TestKeeper(t *testing.T) {
 	})
 
 	_ = k.Run()
+
+	return
+}
+
+func TestKeeperQuit(t *testing.T) {
+	stop := make(chan struct{})
+	defer close(stop)
+
+	k := NewKeeper[int]("test")
+	i := 0
+	k.SetProducer(func(k *Keeper[int]) (clean func(), err error) {
+		ticker := time.NewTicker(1 * time.Second)
+		go func() {
+			for {
+				select {
+				case <-stop:
+					return
+				case <-ticker.C:
+					k.Produce(i)
+					if i == 4 {
+						k.Restart(fmt.Errorf("restart forcedly"))
+					}
+					i++
+				}
+			}
+		}()
+		clean = func() {
+			k.Log().Infof("close ticker")
+			ticker.Stop()
+		}
+		return
+	})
+
+	k.SetConsumer(func(k *Keeper[int], items []int) (err error) {
+		for _, item := range items {
+			k.Log().Infof("receive item: %d", item)
+			return
+		}
+		return
+	})
+
+	err := k.Run()
+	require.Error(t, err)
+
+	return
+}
+
+func TestKeeperOnce(t *testing.T) {
+	k := NewKeeper[int]("test", WithBlockWaitTime(3*time.Second))
+	i := 0
+	k.SetProducer(func(k *Keeper[int]) (clean func(), err error) {
+		timer := time.NewTimer(1 * time.Second)
+		select {
+		case <-timer.C:
+			k.Produce(i)
+		}
+		clean = func() {
+			k.Log().Infof("close timer")
+			timer.Stop()
+		}
+		return
+	})
+
+	k.SetConsumer(func(k *Keeper[int], items []int) (err error) {
+		for _, item := range items {
+			k.Log().Infof("receive item: %d", item)
+			return
+		}
+		return
+	})
+
+	err := k.Run()
+	require.Error(t, err)
 
 	return
 }

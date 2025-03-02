@@ -305,14 +305,12 @@ func (k *Keeper[T]) consume() {
 func (k *Keeper[T]) Restart(err ...error) {
 	e := multierr.Combine(err...)
 	if !k.restarting.CompareAndSwap(false, true) {
-		k.log.Infof("restarting, ignore restart signal: %v", e)
 		return
 	}
 	if k.stopped.Load() {
-		k.log.Infof("stopped, ignore restart signal: %v", e)
 		return
 	}
-	k.log.Infof("receive restart signal: %v, restart after: %s", e, k.conf.restartWaitTime)
+	k.log.Infof("handel restart signal: %v, restart after: %s", e, k.conf.restartWaitTime)
 	k.cleaner.clean()
 	time.Sleep(k.conf.restartWaitTime)
 	k.restartC <- e
