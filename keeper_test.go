@@ -11,7 +11,11 @@ func TestKeeper(t *testing.T) {
 	stop := make(chan struct{})
 	defer close(stop)
 
-	k := NewKeeper[int]("test")
+	k := NewKeeper[int]("test",
+		WithErrorAction(Restart),
+		WithBlockWaitTime(5*time.Second),
+		WithRestartWaitTime(2*time.Second),
+	)
 	i := 0
 	k.SetProducer(func(k *Keeper[int]) (clean func(), err error) {
 		ticker := time.NewTicker(1 * time.Second)
@@ -20,7 +24,6 @@ func TestKeeper(t *testing.T) {
 			i++
 			return
 		}
-
 		go func() {
 			for {
 				select {
@@ -28,12 +31,13 @@ func TestKeeper(t *testing.T) {
 					return
 				case <-ticker.C:
 					k.Produce(i)
-					i++
-					if i == 5 {
+					if i == 4 {
 						k.Restart(fmt.Errorf("restart forcedly"))
-						//k.Stop()
-						return
 					}
+					if i == 6 {
+						time.Sleep(8 * time.Second)
+					}
+					i++
 				}
 			}
 		}()
@@ -62,7 +66,7 @@ func TestKeeper(t *testing.T) {
 		return
 	})
 
-	k.Run()
+	_ = k.Run()
 
 	return
 }

@@ -19,10 +19,10 @@ const (
 
 type Conf struct {
 	errorAction     Action
-	blockDuration   time.Duration
+	blockWaitTime   time.Duration
 	loggerModule    string
 	dataChanSize    int
-	retryDuration   time.Duration
+	restartWaitTime time.Duration
 	logger          Logger
 	bucket          bool
 	bucketThreshold uint
@@ -37,10 +37,10 @@ func WithErrorAction(action Action) Option {
 	}
 }
 
-func WithBlockDuration(duration time.Duration) Option {
+func WithBlockWaitTime(duration time.Duration) Option {
 	return func(conf *Conf) {
 		if duration > 0 {
-			conf.blockDuration = duration
+			conf.blockWaitTime = duration
 		}
 	}
 }
@@ -61,10 +61,10 @@ func WithDataChanSize(size int) Option {
 	}
 }
 
-func WithRetryDuration(duration time.Duration) Option {
+func WithRestartWaitTime(duration time.Duration) Option {
 	return func(conf *Conf) {
 		if duration > 0 {
-			conf.retryDuration = duration
+			conf.restartWaitTime = duration
 		}
 	}
 }
@@ -97,10 +97,10 @@ type Consumer[T any] func(k *Keeper[T], items []T) (err error)
 
 func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
 	conf := &Conf{
-		blockDuration:   time.Minute,
+		blockWaitTime:   time.Minute,
 		loggerModule:    fmt.Sprintf("keeper::%s", name),
 		dataChanSize:    1024,
-		retryDuration:   2 * time.Second,
+		restartWaitTime: 2 * time.Second,
 		bucket:          false,
 		bucketThreshold: 100,
 		bucketInterval:  5 * time.Second,
@@ -118,7 +118,6 @@ func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
 		stopC:     make(chan struct{}, 1),
 		data:      make(chan []T, conf.dataChanSize),
 		updatedAt: time.Now(),
-		store:     newStore(),
 		cleaner: &cleaner{
 			log:    conf.logger,
 			Mutex:  sync.Mutex{},
@@ -129,7 +128,7 @@ func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
 
 type Keeper[T any] struct {
 	name       string
-	store      *store
+	store      sync.Map
 	log        Logger
 	restartC   chan error
 	stopC      chan struct{}
@@ -148,11 +147,12 @@ type Keeper[T any] struct {
 }
 
 func (k *Keeper[T]) Set(key string, value any) {
-	k.store.Set(key, value)
+	k.store.Store(key, value)
 }
 
 func (k *Keeper[T]) Get(key string) any {
-	return k.store.Get(key)
+	v, _ := k.store.Load(key)
+	return v
 }
 
 func (k *Keeper[T]) SetProducer(producer Producer[T]) {
@@ -224,7 +224,7 @@ func (k *Keeper[T]) close() {
 func (k *Keeper[T]) run() (err error) {
 
 	defer func() {
-		k.log.Infof("quit, error: %s", err)
+		k.Stop()
 		k.close()
 	}()
 
@@ -242,26 +242,30 @@ func (k *Keeper[T]) run() (err error) {
 		go k.bucket.Start()
 	}
 Start:
-	k.log.Infof("start")
+	err = nil
 	k.index.Add(1)
-	k.cleaner.clean()
 
 	go func() {
 		clean, e := k.producer(k)
 		k.cleaner.addClean(clean)
 		if e != nil {
-			k.Restart(fmt.Errorf("exec producer error: %s", err))
+			k.Restart(fmt.Errorf("exec producer error: %s", e))
 			return
 		}
-		k.log.Infof("start producer")
+		k.restarting.Store(false)
+		k.log.Infof("start")
 	}()
 
 	select {
 	case err = <-k.restartC:
 		switch k.conf.errorAction {
 		case Quit:
+			if err != nil {
+				k.log.Infof("quit with error: %v", err)
+			}
 			return
 		case Restart:
+			k.updatedAt = time.Now()
 			goto Start
 		default:
 			err = fmt.Errorf("unsupported error action: %d", k.conf.errorAction)
@@ -278,13 +282,13 @@ func (k *Keeper[T]) consume() {
 		k.Log().Warnf("consumer is nil")
 		return
 	}
-	ticker := time.NewTicker(k.conf.blockDuration)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			if time.Now().Sub(k.updatedAt) > k.conf.blockDuration {
-				k.updatedAt = time.Now()
+			if time.Now().Sub(k.updatedAt) > k.conf.blockWaitTime {
 				k.Restart(fmt.Errorf("consume data timeout"))
 			}
 		case items := <-k.data:
@@ -293,26 +297,23 @@ func (k *Keeper[T]) consume() {
 				k.Restart(fmt.Errorf("consume data error: %s", err))
 			}
 		case <-k.stopC:
-			k.log.Infof("stop consuming")
-			ticker.Stop()
 			return
 		}
 	}
 }
 
 func (k *Keeper[T]) Restart(err ...error) {
-	if !k.restarting.CompareAndSwap(false, true) {
-		return
-	}
-	if !k.stopped.Load() {
-		return
-	}
 	e := multierr.Combine(err...)
-	if e != nil {
-		k.log.Errorf("%s, restart after: %s", e, k.conf.retryDuration)
-	} else {
-		k.log.Infof("prepare to restart after: %s", k.conf.retryDuration)
+	if !k.restarting.CompareAndSwap(false, true) {
+		k.log.Infof("restarting, ignore restart signal: %v", e)
+		return
 	}
-	time.Sleep(k.conf.retryDuration)
+	if k.stopped.Load() {
+		k.log.Infof("stopped, ignore restart signal: %v", e)
+		return
+	}
+	k.log.Infof("receive restart signal: %v, restart after: %s", e, k.conf.restartWaitTime)
+	k.cleaner.clean()
+	time.Sleep(k.conf.restartWaitTime)
 	k.restartC <- e
 }

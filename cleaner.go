@@ -26,7 +26,7 @@ func (c *cleaner) clean() {
 	}
 	c.cleans = []func(){}
 	if n > 0 {
-		c.log.Infof("clean done")
+		c.log.Infof("cleand")
 	}
 }
 
