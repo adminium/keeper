@@ -1,8 +1,5 @@
 package keeper
 
-type Logger interface {
-	Debugf(template string, args ...interface{})
-	Infof(template string, args ...interface{})
-	Warnf(template string, args ...interface{})
-	Errorf(template string, args ...interface{})
-}
+import "github.com/adminium/logger"
+
+type Logger = logger.EventLogger

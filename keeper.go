@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+var NewLogger = func(module string) logger.EventLogger {
+	return logger.NewLogger(module)
+}
+
 type Action int
 
 const (
@@ -23,7 +27,7 @@ type Conf struct {
 	loggerModule    string
 	dataChanSize    int
 	restartWaitTime time.Duration
-	logger          Logger
+	logger          logger.EventLogger
 	bucket          bool
 	bucketThreshold uint
 	bucketInterval  time.Duration
@@ -105,7 +109,7 @@ func NewKeeper[T any](name string, options ...Option) *Keeper[T] {
 		bucketThreshold: 100,
 		bucketInterval:  5 * time.Second,
 	}
-	conf.logger = logger.NewLogger(conf.loggerModule)
+	conf.logger = NewLogger(conf.loggerModule)
 	for _, option := range options {
 		option(conf)
 	}
